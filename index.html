@@ -42,11 +42,11 @@
 <body>
   <header>
     <div class="brand"><h1>3D‑просмотрщик</h1><div id="filename">Модель не загружена</div></div>
-    <label class="file-button" for="file">Открыть .glb</label>
+    <label class="file-button" for="file">Открыть модель</label>
     <input id="file" type="file" accept=".glb,model/gltf-binary">
   </header>
   <main id="stage">
-    <div id="empty"><div id="empty-card"><div class="icon">◇</div><strong>Загрузите 3D-модель</strong><p>Выберите файл <b>.glb</b>. Перетаскивайте модель пальцем, чтобы вращать; сведите или разведите пальцы для масштаба.</p></div></div>
+    <div id="empty"><div id="empty-card"><div class="icon">◇</div><strong>Загрузите 3D-модель</strong><p>Выберите файл <b>GLB</b> (до 25 МБ). Перетаскивайте модель пальцем, чтобы вращать; сведите или разведите пальцы для масштаба.</p></div></div>
     <div id="error"></div>
     <div id="hint">Вращение — перетаскивание · масштаб — щипок или колёсико</div>
   </main>
@@ -54,7 +54,7 @@
     <div id="light-controls"><label for="light-angle">Поворот света <span id="angle-label">225°</span></label><input id="light-angle" type="range" min="0" max="360" step="1" value="225"></div>
     <div id="actions">
       <button id="reset">Сбросить вид</button>
-      <button id="open-file" class="primary">Открыть .glb</button>
+      <button id="open-file" class="primary">Открыть модель</button>
       <button id="upload-share" class="primary" disabled>Загрузить и поделиться</button>
       <button id="copy-link" hidden>Скопировать ссылку</button>
     </div>
@@ -62,6 +62,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { Client, Account, Storage, ID, Permission, Role } from 'appwrite';
     // Публичные настройки проекта: API-ключи и токен бота здесь не нужны.
@@ -87,14 +88,27 @@
     const copyButton = document.querySelector('#copy-link');
     const angleSlider = document.querySelector('#light-angle');
     const angleLabel = document.querySelector('#angle-label');
-    const scene = new THREE.Scene(); scene.background = new THREE.Color('#171b26');
+    const scene = new THREE.Scene(); scene.background = new THREE.Color('#b8bdc3');
     const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1000); camera.position.set(3, 2.2, 4);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75)); renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; stage.prepend(renderer.domElement);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x657089, 1.8));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 3.0); scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0x9dafff, 1.1); scene.add(fillLight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.35; stage.prepend(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xe6e6e6, 2.4));
+    // Studio reflections also illuminate metallic GLB materials.
+    const environmentGenerator = new THREE.PMREMGenerator(renderer);
+    const studioRoom = new RoomEnvironment();
+    const environmentTarget = environmentGenerator.fromScene(studioRoom, 0.04);
+    scene.environment = environmentTarget.texture;
+    scene.environmentIntensity = 1.0;
+    studioRoom.dispose();
+    environmentGenerator.dispose();
+    for (const [x, y, z] of [[0, 1, 0], [0, -1, 0], [-1, 0, 0], [1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const light = new THREE.DirectionalLight(0xffffff, y === 1 ? 1.3 : 0.8);
+      light.position.set(x, y, z);
+      scene.add(light);
+    }
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.8); scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 1.0); scene.add(fillLight);
     const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = false;
     controls.minDistance = 0.03; controls.maxDistance = 500; controls.target.set(0, 0, 0);
     const loader = new GLTFLoader(); let currentModel = null; let currentFile = null; let shareUrl = '';
@@ -123,26 +137,29 @@
       angleLabel.textContent = `${degrees}°`;
       requestRender();
     }
-    async function displayGlb(buffer, label, keepFile = null, version = loadVersion) {
+    async function displayModel(buffer, label, keepFile = null, version = loadVersion) {
       const header = new DataView(buffer);
       if (buffer.byteLength < 12 || header.getUint32(0, true) !== 0x46546c67 || header.getUint32(4, true) !== 2 || header.getUint32(8, true) !== buffer.byteLength) throw new Error('Некорректный GLB 2.0');
-      const result = await loader.parseAsync(buffer, '');
-      if (version !== loadVersion) { disposeModel(result.scene); return; }
+      const model = (await loader.parseAsync(buffer, '')).scene;
+      let vertices = 0;
+      model.traverse(n => { vertices += n.geometry?.attributes?.position?.count || 0; });
+      if (!vertices) { disposeModel(model); throw new Error('В файле нет геометрии для просмотра.'); }
+      if (version !== loadVersion) { disposeModel(model); return; }
       if (currentModel) { scene.remove(currentModel); disposeModel(currentModel); }
-      currentModel = result.scene; scene.add(currentModel); frameModel(currentModel); currentFile = keepFile;
+      currentModel = model; scene.add(currentModel); frameModel(currentModel); currentFile = keepFile;
       uploadButton.textContent = 'Загрузить и поделиться';
       filename.textContent = label; empty.style.display = 'none'; uploadButton.disabled = !currentFile; copyButton.hidden = true; shareUrl = '';
     }
     async function loadLocalFile(file) {
       if (uploading) { showError('Дождись окончания загрузки текущей модели.'); return; }
       errorBox.style.display = 'none'; if (!file) return;
-      if (!file.name.toLowerCase().endsWith('.glb')) { showError('Нужен файл .glb. В Blender экспортируй модель через Файл → Экспорт → glTF 2.0 → Format: GLB.'); return; }
-      if (file.size > MAX_FILE_BYTES) { showError('Файл больше 25 МБ. Уменьши модель или текстуры и экспортируй .glb заново.'); return; }
+      if (!file.name.toLowerCase().endsWith('.glb')) { showError('Выбери файл GLB.'); return; }
+      if (file.size > MAX_FILE_BYTES) { showError('Файл больше 25 МБ. Уменьши размер модели.'); return; }
       const version = ++loadVersion;
       uploadButton.disabled = true;
       filename.textContent = `Загрузка: ${file.name}`;
-      try { await displayGlb(await file.arrayBuffer(), file.name, file, version); }
-      catch (err) { console.error(err); filename.textContent = 'Модель не загружена'; showError('Не удалось открыть файл. Проверь, что это корректный .glb.'); }
+      try { await displayModel(await file.arrayBuffer(), file.name, file, version); }
+      catch (err) { console.error(err); if (version !== loadVersion) return; filename.textContent = 'Модель не загружена'; showError(`Не удалось открыть файл: ${err.message}`); }
     }
     async function loadSharedModel(id) {
       if (!configured) { showError('Заполни настройки Appwrite в index.html.'); return; }
@@ -151,15 +168,17 @@
       uploadButton.disabled = true;
       filename.textContent = 'Загружаю общую модель…';
       try {
+        const metadata = await storage.getFile(APPWRITE_BUCKET_ID, id);
+        if (metadata.sizeOriginal > MAX_FILE_BYTES) throw new Error('Модель превышает 25 МБ');
         const response = await fetch(storage.getFileView(APPWRITE_BUCKET_ID, id));
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const buffer = await response.arrayBuffer();
         if (buffer.byteLength > MAX_FILE_BYTES) throw new Error('Модель превышает лимит размера');
-        await displayGlb(buffer, `Общая модель · ${id.slice(0, 8)}`, null, version);
+        await displayModel(buffer, metadata.name, null, version);
       } catch (error) {
         if (version !== loadVersion) return;
         filename.textContent = 'Модель недоступна';
-        showError('Не удалось открыть модель. Возможно, файл удалён, проект приостановлен или исчерпан лимит трафика.');
+        showError(error.code === 401 || error.code === 403 ? 'Нет доступа: включи File security и Read для Any у файла в Appwrite.' : `Не удалось открыть модель: ${error.message}. Файл мог быть удалён через 36 часов.`);
       }
     }
     function getStartParam() {
