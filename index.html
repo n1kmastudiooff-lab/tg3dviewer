@@ -41,7 +41,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><h1>3D‑просмотрщик</h1><div id="filename">Модель не загружена</div></div>
+    <div class="brand"><h1>3D-Viewer</h1><div id="filename">Модель не загружена</div></div>
     <label class="file-button" for="file">Открыть модель</label>
     <input id="file" type="file" accept=".glb,model/gltf-binary">
   </header>
@@ -88,7 +88,7 @@
     const copyButton = document.querySelector('#copy-link');
     const angleSlider = document.querySelector('#light-angle');
     const angleLabel = document.querySelector('#angle-label');
-    const scene = new THREE.Scene(); scene.background = new THREE.Color('#9299a2');
+    const scene = new THREE.Scene(); scene.background = new THREE.Color('#fffee6');
     const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1000); camera.position.set(3, 2.2, 4);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75)); renderer.outputColorSpace = THREE.SRGBColorSpace;
